@@ -1,0 +1,5 @@
+numpy
+gym
+-e git+https://gitlab.com/doctorj/ibroke.git#egg=ibroke
+sphinx
+sphinx_rtd_theme
