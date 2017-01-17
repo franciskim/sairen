@@ -19,16 +19,24 @@ live -- there is no backtesting and no market simulator, though you can (and REA
 
 .. |statusbadge| image:: https://img.shields.io/badge/status-alpha-red.svg
 .. |buildbadge| image:: https://gitlab.com/doctorj/sairen/badges/master/build.svg
-                :target: https://gitlab.com/doctorj/sairen/
+                :target: projlink_
 
-|buildbadge| |statusbadge| (Don't bet real money yet)
+|buildbadge| |statusbadge|
+
+.. GitLab README doesn't render TOC (where would it link anyway), so we have to put in normal links.
+
+* :projlink:`GitLab Repo <>`
+* :doclink:`Documentation <index.html>`
+    * :doclink:`Quickstart <quickstart.html>`
+    * :doclink:`Examples <examples.html>`
+    * :doclink:`Observations and Actions <observations.html>`
+    * :doclink:`Transforms <xforms.html>`
+    * :doclink:`API<api.html>`
 
 
-Online documentation: http://doctorj.gitlab.io/sairen/
-
-.. TODO: Replace with links so we get subheadings in nav but not here
 .. toctree::
    :maxdepth: 2
+   :hidden:
 
    Home <self>
    quickstart
@@ -71,7 +79,7 @@ No but seriously:
 * Adaptive strategies
 * More (opportunity for) profit
 
-Trading on low-frequency, say, daily data, you have ~250 prices per year for
+Trading on low-frequency, say, daily data, you have ~250 prices per year going back
 perhaps tens of years. That's thousands of data points, not really enough to train
 "serious" models without overfitting. (And is the price of IBM 20 years ago really meaningful today
 anyway?) Should you manage to find a historically profitable strategy, it might take months to see
@@ -115,7 +123,7 @@ Show Me The Code
 
 .. literalinclude:: ../examples/trading_monkey.py
 
-More where that came from at https://gitlab.com/doctorj/sairen/ .
+Check out the examples at :doclink:`examples.html`.
 
 
 Isn't that a supervised learning problem?

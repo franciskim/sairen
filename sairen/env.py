@@ -26,18 +26,19 @@ from queue import Queue
 import gym
 import numpy as np
 from gym.spaces import Box
-from ibroke import IBroke, Quote, Bar, Tick
+from ibroke import IBroke, Bar, create_logger
 
-__version__ = "0.2.0"
-__all__ = ('MarketEnv', 'Quote', 'Bar', 'Tick')
+
+__version__ = "0.3.0"
+__all__ = ('MarketEnv', 'Bar')
 # These are used to bound observation Boxes, not sure how important it really is.
 MAX_INSTRUMENT_PRICE = 1e6
 MAX_INSTRUMENT_VOLUME = 1e9
 MAX_INSTRUMENT_QUANTITY = 20000
 MAX_TRADE_SIZE = 1e6
-BAR_BOUNDS = Bar(time=time.time() + 10 * 365 * 24 * 60 * 60, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME)
-QUOTE_BOUNDS = Quote(time=BAR_BOUNDS.time, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME)
-TICK_BOUNDS = Tick(time=BAR_BOUNDS.time, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=BAR_BOUNDS.time, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME)
+MAX_TIME = time.time() + 10 * 365 * 24 * 60 * 60
+BAR_BOUNDS = Bar(time=MAX_TIME, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=MAX_TIME, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME)
+RENDER_HEADERS_EVERY_STEPS = 50     #: Print column names to stdout for human-rendered output every this many steps
 
 
 class MarketEnv(gym.Env):
@@ -56,38 +57,30 @@ class MarketEnv(gym.Env):
     environment's ``max_quantity`` parameter.  -1 means set the position to short ``max_quantity``, 0 means
     exit/close/flatten/no position, and 1 means set the position to long ``max_quantity``. These are "target" positions,
     so an action of 1 means "regardless of current position, buy or sell (or do nothing) as necessary to make my position
-    ``max_quantity``."
+    ``max_quantity``."  Intermediate values are scaled by ``max_quantity`` and rounded to the nearest integer.
     """
     metadata = {'render.modes': ['human']}
-    log = logging.getLogger(__name__)
-    log.setLevel(logging.INFO)
+    log = create_logger('sairen', logging.INFO)
 
     # IBroke is event-driven (its methods are called asynchronously by IBPy), whereas Env is essentially an external
     # iterator (the caller calls step() when it's ready for the next observation). To play together, when IBroke's on_bar()
-    # callback receives a new tick/bar (observation), it's stored in a queue.  When Env.step() is called, it takes the next bar
+    # callback receives a new bar (observation), it's stored in a queue.  When Env.step() is called, it takes the next bar
     # out.  If no bars are available, step() will block waiting for a bar to appear in the queue. If more than one
     # bar is available, it means that step() is falling behind on processing bars, and a warning will be printed.
 
-    # TODO: Idea: Maybe only one type of observation with every value, choose period or update every change.
-    def __init__(self, instrument, max_quantity=1, obs_type='bar', obs_xform=None, obs_size=1, episode_steps=None, host='localhost', port=7497, client_id=None):
+    def __init__(self, instrument, max_quantity=1, obs_type='time', obs_size=1, obs_xform=None, episode_steps=None, host='localhost', port=7497, client_id=None):
         """
         :param str,tuple instrument: ticker string or :class:`IBroke` ``(symbol, sec_type, exchange, currency, expiry, strike, opt_type)`` tuple.
         :param int max_quantity: The number of shares/contracts that will be bought (or sold) when the action is 1 (or -1).
-        :param str obs_type: The type of observation (market data).  Raw observations are numpy float ndarrays with the following fields:
+        :param str obs_type: ``time`` for bars at regular intervals, or ``tick`` for bars at every quote change.
+          Raw observations are numpy float ndarrays with the following fields::
 
-          * ``bar``: time, open, high, low, close, volume, open_interest
-          * ``quote``: time, bid, bidsize, ask, asksize, vwap, volume
-          * ``tick``: time, bid, bidsize, ask, asksize, last, lastsize, lasttime, volume, open_interest
+                time, bid, bidsize, ask, asksize, last, lastsize, lasttime,
+                open, high, low, close, vwap, volume, open_interest
 
-          See the convenience namedtuples :class:`Bar`, :class:`Quote`, :class:`Tick` for detailed field descriptions.
-
-          * ``time`` is Unix timestamp of the **end** of the bar/quote/tick, float UTC seconds since the epoch.
-          * ``volume`` for bar and quote is since the last observation, may be zero if there were no trades since last observation.
-            ``volume`` for tick is total cumulative volume for the trading day.  Volume is divided by 100 for US stocks.
-          * ``vwap`` is Volume-Weighted Average Price, and will be zero if there were no trades since the last observation.
-          * ``open_interest`` is not available for most instruments and will be ``NaN``.
-        :param float obs_size: How often you get an observation in seconds.   E.g., ``obs_type='quote'`` and ``obs_size=1`` means a quote every 1 second.
-        :param func obs_xform: Callable that takes a raw input observation array (of type ``obs_type``) and transforms it,
+          See the :class:`Bar` convenience namedtuple for detailed field descriptions.
+        :param float obs_size: How often you get an observation in seconds.  Ignored for ``obs_type='tick'``.
+        :param func obs_xform: Callable that takes a raw input observation array and transforms it,
           returning either another numpy array or ``None`` to indicate data is not ready yet.
         :param int,None episode_steps: Number of steps to run before returning `done`, or ``None`` to run indefinitely.
           The final step in an episode will have its action forced to close any open positions so PNL can be properly accounted.
@@ -117,33 +110,20 @@ class MarketEnv(gym.Env):
         self.ib = IBroke(host=host, port=port, client_id=client_id, verbose=2)
         self.instrument = self.ib.get_instrument(instrument)
         self.log.info('Sairen %s trading %s up to %d contracts', __version__, self.instrument.tuple(), self.max_quantity)
-        if obs_type == 'quote':
-            self.ib.register(self.instrument, on_quote=self._on_mktdata, quote_size=obs_size, on_order=self._on_order, on_alert=self._on_alert)
-            self.observation_space = Box(low=np.zeros(len(QUOTE_BOUNDS)), high=np.array(QUOTE_BOUNDS))
-        elif obs_type == 'bar':
-            self.ib.register(self.instrument, on_bar=self._on_mktdata, bar_size=obs_size, on_order=self._on_order, on_alert=self._on_alert)
-            self.observation_space = Box(low=np.zeros(len(BAR_BOUNDS)), high=np.array(BAR_BOUNDS))
-        elif obs_type == 'tick':
-            self.ib.register(self.instrument, on_tick=self._on_mktdata, on_order=self._on_order, on_alert=self._on_alert)
-            self.observation_space = Box(low=np.zeros(len(TICK_BOUNDS)), high=np.array(TICK_BOUNDS))
-        else:
-            raise ValueError("Invalid obs_type '{}'".format(obs_type))
-        if hasattr(obs_xform, 'observation_space'):
-            self.observation_space = obs_xform.observation_space
+        self.ib.register(self.instrument, on_bar=self._on_mktdata, bar_type=obs_type, bar_size=obs_size, on_order=self._on_order, on_alert=self._on_alert)
+        self.observation_space = getattr(obs_xform, 'observation_space', Box(low=np.zeros(len(BAR_BOUNDS)), high=np.array(BAR_BOUNDS)))
         self.log.debug('XFORM %s', self._xform)
         self.log.debug('OBS SPACE %s', self.observation_space)
         self.pos_actual = self.ib.get_position(self.instrument)     # Actual last reported number of contracts held
         # TODO: Track step time, stuff in info
 
-    def _on_mktdata(self, instrument, *data):
-        """Called by IBroke on new market `data`; transforms observation and, if ready, puts it in data_q."""
-        self.log.debug('OBS RAW %s', data)
-        self.raw_obs = data
+    def _on_mktdata(self, instrument, bar):
+        """Called by IBroke on new market data; transforms observation and, if ready, puts it in data_q."""
+        self.log.debug('OBS RAW %s', bar)
+        self.raw_obs = bar
         self.pos_actual = self.ib.get_position(self.instrument)
-        # TODO: Don't break if data isn't a quote
-        quote = Quote._make(data)
-        self.unrealized_gain = self.pos_actual * self.instrument.leverage * ((quote.bid if self.pos_actual > 0 else quote.ask) - (self.ib.get_cost(self.instrument) or 0))     # If pos > 0, what could we sell for?  Assume buy at the ask, sell at the bid
-        data = np.asarray(data, dtype=float)
+        self.unrealized_gain = self.pos_actual * self.instrument.leverage * ((bar.bid if self.pos_actual > 0 else bar.ask) - (self.ib.get_cost(self.instrument) or 0))     # If pos > 0, what could we sell for?  Assume buy at the ask, sell at the bid
+        data = np.asarray(bar, dtype=float)
         obs = self._xform(data, self.unrealized_gain, self.pos_actual, self.max_quantity, self.log)
         self.log.debug('OBS XFORM %s', obs)
 
@@ -253,24 +233,38 @@ class MarketEnv(gym.Env):
         return self.observation, self.reward, self.done, info
 
     def _render(self, mode='human', close=False):
+        if self.instrument.sec_type == 'CASH':
+            FIELDS = (
+                ('time', '{time}', 8),
+                ('step', '{step:d}', '>5'),
+                ('pnl', '{pnl:.2f}', '>7'),
+                ('gain', '{gain:.2f}', '>7'),
+                ('reward', '{reward:.2f}', '>7'),
+                ('action', '{action: 6.2f}', '>6'),
+                ('position', '{pos: 4d}@{cost:<7.5f}', '>15'),
+                ('bid/ask', '{bid:7.5f}/{ask:<7.5f}', '>21'))
+        else:
+            FIELDS = (
+                ('time', '{time}', 8),
+                ('step', '{step:d}', '>5'),
+                ('pnl', '{pnl:.2f}', '>7'),
+                ('gain', '{gain:.2f}', '>7'),
+                ('reward', '{reward:.2f}', '>7'),
+                ('action', '{action: 6.2f}', '>6'),
+                ('position', '{pos: 4d}@{cost:<7.2f}', '>12'),
+                ('bid/ask', '{bid:7.2f}/{ask:<7.2f}', '>15'),
+                ('sizes', '{bidsize:4.0f}x{asksize:<4.0f}', '>9'),
+                ('last', '{last:7.2f}@{lastsize:<4.0f}', '>12'),
+                ('volume', '{volume:>8.0f}', '>8'))
+
         if mode == 'human':
             if not close:
-                data = dict(step=self.step_num, reward=self.reward, gain=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.datetime.utcfromtimestamp(round(self.raw_obs[0])))
-                if self.obs_type == 'bar':
-                    print('{time} {step:3d}   PNL {pnl: 7.2f}   unreal {gain: 7.2f}   rew {reward: 7.2f}   act {action: 5.2f}   pos {pos: d}@{cost:<7.2f}  {open:7.2f} {high:7.2f} {low:7.2f} {close:7.2f} {volume:<4.0f}'.format(**dict(data, **Bar._make(self.raw_obs)._asdict())))
-                elif self.obs_type == 'quote':
-                    print('{time} {step:3d}   PNL {pnl: 7.2f}   unreal {gain: 7.2f}   rew {reward: 7.2f}   act {action: 5.2f}   pos {pos: d}@{cost:<7.2f}  {bid:7.2f}/{ask:<7.2f} {bidsize:4.0f}x{asksize:<4.0f} {vwap:7.2f}@{volume:<4.0f}'.format(**dict(data, **Quote._make(self.raw_obs)._asdict())))
-                elif self.obs_type == 'tick':
-                    print('{time} {step:3d}   PNL {pnl: 7.2f}   unreal {gain: 7.2f}   rew {reward: 7.2f}   act {action: 5.2f}   pos {pos: d}@{cost:<7.2f}  {bid:7.2f}/{ask:<7.2f} {bidsize:4.0f}x{asksize:<4.0f} {last:7.2f}@{lastsize:<4.0f} {volume:<4.0f}'.format(**dict(data, **Tick._make(self.raw_obs)._asdict())))
-                else:
-                    assert False
+                if self.step_num % RENDER_HEADERS_EVERY_STEPS == 0:
+                    print(*('{:{}}'.format(name, width) for name, _, width in FIELDS))
+                data = dict(self.raw_obs._asdict(), step=self.step_num, reward=self.reward, gain=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.datetime.utcfromtimestamp(round(self.raw_obs[0])).time())
+                print(*('{:{}}'.format(fmt.format(**data), width) for _, fmt, width in FIELDS))
         else:
             raise NotImplementedError("Render mode '{}' not implemented".format(mode))
 
     def _seed(self, seed=None):
         raise Warning('This environment is inherently nondeterministic; seed() does nothing.')
-
-
-def seqfmt(fmt, seq, sep=','):
-    """:Return: vectorized string format of sequence `seq` with format `fmt`."""
-    return sep.join(fmt.format(s) for s in seq)

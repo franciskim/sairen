@@ -1,10 +1,8 @@
 """
-OpenAI Gym environment for the financial markets using the Interactive Brokers API.
-
-.. seealso:: https://gym.openai.com/docs
+Sairen utility functions.
 """
 
-# Copyright (C) 2016  Doctor J
+# Copyright (C) 2017  Doctor J
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published by
@@ -20,6 +18,6 @@ OpenAI Gym environment for the financial markets using the Interactive Brokers A
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-from .env import MarketEnv, Bar
-
-
+def seqfmt(fmt, seq, sep=','):
+    """:Return: vectorized string format of sequence `seq` with format `fmt`."""
+    return sep.join(fmt.format(s) for s in seq)

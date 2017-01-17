@@ -5,7 +5,7 @@ Observation Transforms
 
 .. note::
 
-   **TL;DR**: Pass a callable to :class:`MarkenEnv` as ``obs_xform``, give it an ``observation_space`` field; raw observation arrays in,
+   **TL;DR**: Pass a callable to :class:`MarketEnv` as ``obs_xform``, give it an ``observation_space`` field; raw observation arrays in,
    cooked arrays out, or ``None`` if you don't have enough data yet; be sure to handle ``NaN``.
 
 As powerful as deep learning has become, it is unlikely to be able to make sense of the essentially random numbers that
@@ -27,7 +27,7 @@ version::
 You tell :class:`MarketEnv` to use it with the ``obs_xform`` argument::
 
     env = MarketEnv("AAPL", obs_xform=double)
-    obs = env.reset()       # All quote values doubled.  Not terribly useful.
+    obs = env.reset()       # All bar values doubled.  Not terribly useful.
 
 And then the observations returned from :meth:`step` will be transformed.
 
@@ -43,7 +43,7 @@ You can do this with a callable object::
             self.q.append(obs)
             return np.array(self.q).mean(axis=0)
 
-Since your object is callable, you can test it just by calling it with some data:
+Since your object is callable, you can test it just by calling it with some data::
 
     >>> xform = AverageXform(2)
     >>> xform([1,2,3])
@@ -56,13 +56,13 @@ know its observation shape.  You tell it by giving your transform object an ``ob
 which should be a `gym.Space <https://gym.openai.com/docs#spaces>`__ object::
 
     from gym.spaces import Box
-    from sairen import Quote
+    from sairen import Bar
 
     class QueueXform:
         """Stack the last `lookback` observations into a 2D array."""
         def __init__(self, lookback):
             self.q = deque(maxlen=lookback)
-            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Quote._fields)))
+            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Bar._fields)))
 
         def __call__(self, obs):
             self.q.append(obs)
@@ -83,13 +83,13 @@ to create a full observation.
 If your transform doesn't have enough data to build a full observation yet, just return ``None``::
 
     from gym.spaces import Box
-    from sairen import Quote
+    from sairen import Bar
 
     class QueueXform:
         """Stack the last `lookback` observations into a 2D array."""
         def __init__(self, lookback):
             self.q = deque(maxlen=lookback)
-            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Quote._fields)))
+            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Bar._fields)))
 
         def __call__(self, obs):
             self.q.append(obs)

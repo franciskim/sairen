@@ -5,13 +5,13 @@ from sairen.env import MarketEnv
 
 def main():
     """Create a market environment, instantiate a random agent, and run the agent for one episode."""
-    env = MarketEnv("AAPL", obs_type='bar', obs_size=1, episode_steps=20)           # Apple stock, 1-second OHLCV bars.
-    agent = RandomAgent(env.action_space)   # Actions are continuous from -1 = go short to +1 = go long.  0 is go flat.
-    observation = env.reset()       # A bar observation is a numpy float array of [timestamp, open, high, low, close, volume, open_interest]
+    env = MarketEnv("AAPL", episode_steps=20)   # Apple stock, 1-second bars by default
+    agent = RandomAgent(env.action_space)       # Actions are continuous from -1 = go short to +1 = go long.  0 is go flat.  Sets absolute target position.
+    observation = env.reset()       # A bar observation is a numpy float array, values: time, bid, bidsize, ask, asksize, last, lastsize, lasttime, open, high, low, close, vwap, volume, open_interest
     done = False
     total_reward = 0.0              # Reward is the profit realized when a trade closes
     while not done:
-        env.render()                # Action is a float where -1, 0, 1 set the (absolute) target position to short, flat, or long respectively
+        env.render()
         observation, reward, done, info = env.step(agent.act(observation))
         total_reward += reward
 

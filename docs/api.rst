@@ -10,8 +10,6 @@ API Documentation
 
 .. We can't use automodule because we don't want :members: for namedtuples, since the auto docs are pretty useless.
 
-.. autoclass:: Quote
 .. autoclass:: Bar
-.. autoclass:: Tick
 
 

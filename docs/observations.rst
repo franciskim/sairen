@@ -5,21 +5,23 @@ Observations and Actions
 
 Observations
 ------------
-Sairen's :class:`MarketEnv` provides observations as numpy arrays of market data. There are three types of observations,
-which you choose with the :class:`MarketEnv` ``obs_type`` parameter: ``bar`` (the default), ``quote``, and ``tick``.
-For the first two, the default period is 1 second, and can be changed with the ``obs_size`` parameter.  Ticks are
-generated as values change, which can be many times per second, rather than on a schedule, Each type has a namedtuple
-that can wrap the raw observation arrays for convenience; their documentation below explains the values in the order
-they occur.
+Sairen's :class:`MarketEnv` provides observations as numpy arrays of market data ("bars").  The default bar period is 1
+second, and can be changed with the ``obs_size`` parameter.  The :class:`Bar` :obj:`namedtuple <collections.namedtuple>` can wrap raw observation arrays
+to access values by name::
 
-.. autoclass:: Quote
-   :noindex:
+    bar = Bar._make(obs)
+    print(bar.time, bar.open, bar.high, bar.low, bar.close, bar.volume)
+
+
+The documentation below explains the values in the order they occur.
 
 .. autoclass:: Bar
    :noindex:
 
-.. autoclass:: Tick
-   :noindex:
+If you would prefer to build bars yourself, you can also get a "bar" on every quote change from IB by using ``obs_type='tick'``.
+Note these can arrive many times per second, generally too fast to reasonably act on directly since your connection latency
+is generally higher than that.
+
 
 Actions
 -------

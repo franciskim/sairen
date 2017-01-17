@@ -30,8 +30,8 @@ TRAIN_INTERVAL_EPISODES = 5
 
 def main():
     """Build model and train on environment."""
-    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_type='quote', obs_xform=xform.BinaryDelta(3), episode_steps=STEPS_PER_EPISODE, client_id=3)
-    #env = MarketEnv(("AAPL", "STK", "SMART", "USD"), obs_type='quote', obs_xform=xform.BinaryDelta(3), episode_steps=STEPS_PER_EPISODE, client_id=4)
+    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=xform.BinaryDelta(3), episode_steps=STEPS_PER_EPISODE, client_id=3)
+    #env = MarketEnv(("AAPL", "STK", "SMART", "USD"), obs_xform=xform.BinaryDelta(3), episode_steps=STEPS_PER_EPISODE, client_id=4)
     nb_actions = 3      # Keras-RL CEM is a discrete agent
 
     # Option 1 : Simple model

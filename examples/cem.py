@@ -83,7 +83,7 @@ def evaluate(env, agent, steps, iteration=None, episode=None, render=True):
 
 
 def main():
-    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_type='quote', obs_xform=BinaryDelta(1), episode_steps=100, client_id=2)
+    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=BinaryDelta(3), episode_steps=100, client_id=2)
     obs_size = env.observation_space.shape[0]
 
     def evaluate_params(agent_params, iteration=None, episode=None):

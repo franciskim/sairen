@@ -1,6 +1,8 @@
 Quickstart
 ==========
 
+.. currentmodule:: sairen
+
 Download IB Trader Workstation
 ------------------------------
 The Interactive Brokers API is a little weird in that you don't connect directly to their servers;
@@ -64,20 +66,55 @@ This should print something like this:
 .. code-block:: console
 
     Server Version: 76
-    TWS Time at connection:20170104 23:40:55 PST
-    [2017-01-04 23:41:00,953] Sairen 0.1.0 trading ('ES', 'FUT', 'GLOBEX', 'USD', '20170317', 0.0, None) up to 1 contracts
-    2017-01-05 07:41:03   0   PNL    0.00   unreal    0.00   rew    0.00   act  0.00   pos  0@0.00     2260.75/2260.50 2261x2261     nan@nan          0  0  1  1  0
-    2017-01-05 07:41:04   1   PNL    0.00   unreal    0.00   rew    0.00   act  0.10   pos  0@0.00     2260.75/2260.50 2261x2261     nan@nan          0  0  1  1  0
-    2017-01-05 07:41:05   2   PNL    0.00   unreal    0.00   rew    0.00   act  0.43   pos  0@0.00     2260.75/2260.50 2261x2261     nan@nan          0  0  1  1  0
-    2017-01-05 07:41:06   3   PNL    0.00   unreal    0.00   rew    0.00   act  0.21   pos  0@0.00     2260.75/2260.50 2261x2261     nan@nan          0  0  1  1  0
+    TWS Time at connection:20170116 15:21:22 PST
+    2017-01-16 15:21:28 [INFO] sairen.env: Sairen 0.3.0 trading ('AAPL', 'STK', 'SMART', 'USD', None, 0.0, None) up to 1 contracts
+    2017-01-16 15:21:28 [WARNING] sairen.env: ALERT: Unhalt
+    time      step     pnl    gain  reward action     position         bid/ask     sizes         last   volume
+    23:21:32     0    0.00    0.00    0.00   0.00    0@0.00     120.45/120.47     4x1     120.44@1       35030
+    23:21:33     1    0.00    0.00    0.00   0.10    0@0.00     120.45/120.48     3x33    120.44@1       35030
+    23:21:34     2    0.00    0.00    0.00   0.43    0@0.00     120.44/120.46     5x35    120.44@1       35030
+    23:21:35     3    0.00    0.00    0.00   0.21    0@0.00     120.44/120.46     5x35    120.44@1       35030
+    23:21:36     4    0.00    0.00    0.00   0.09    0@0.00     120.44/120.46     5x34    120.44@1       35030
 
 Trades should be reflected in the TWS GUI.  You can safely stop it with CTRL-C.
 
 Congratulations, you're ready to start printing money!
 
-Contract tuples
----------------
-Coming soon.
+Instrument tuples
+-----------------
+Here are some examples of specifying the ``instrument`` you pass to :class:`MarketEnv`:
+
+* US Stocks: ``'AAPL'``
+* Futures: ``('ES', 'FUT', 'GLOBEX', 'USD', '20170317')``
+* Forex: ``('EUR', 'CASH', 'IDEALPRO')``
+
+The general form is a 7-tuple: ``(symbol, sec_type, exchange, currency, expiry, strike, opt_type)``
+where you can elide any trailing values that are unneeded.  If you omit the expiry date, Sairen will
+choose the instrument with the nearest expiry.
+
+symbol:
+    The ticker symbol, or base currency for forex
+sec_type:
+    The security type for the contract;  stock ``STK``, futures ``FUT``, forex ``CASH``, options ``OPT``
+exchange:
+    The exchange to trade the contract on.  Usually, stock ``SMART``, futures ``GLOBEX``, forex ``IDEALPRO``
+currency:
+    The currency in which to purchase the contract (quote currency for forex), usually ``USD``
+expiry:
+    Future or option expiry date, format ``YYYYMMDD``.
+strike:
+    The strike price for options
+opt_type:
+    ``PUT`` or ``CALL`` for options
+
+
+The best way to find instrument details is in TWS itself.  Right click an empty spot in Favorites Monitor, type in
+the search term, choose the instrument you want.  When you have the instrument in Favorites, right-click and choose
+Contract Info > Description.
+
+You can also try IB's online `contract search tool <https://pennies.interactivebrokers.com/cstools/contract_info/v3.9/>`__, but
+it leaves a lot to be desired.
+
 
 Keeping up with real time
 -------------------------

@@ -23,7 +23,7 @@ from collections import deque
 
 import numpy as np
 from gym.spaces import Box
-from ibroke import Quote
+from . import Bar
 
 NYSE_OPEN_TIME = datetime.time(14, 30)      # EST in UTC
 NYSE_CLOSE_TIME = datetime.time(21, 00)
@@ -43,21 +43,21 @@ class BinaryDelta:
 
     # TODO: Need quotes or maybe account update messages to compute unrealized PNL
 
-    def __call__(self, quote, unrealized_gain, position_actual, max_quantity, logger):
-        logger.debug('XFORM %s', quote)
-        assert len(quote) == len(Quote._fields)
-        quote = Quote._make(quote)
-        dt = datetime.datetime.utcfromtimestamp(quote.time)
+    def __call__(self, bar, unrealized_gain, position_actual, max_quantity, logger):
+        logger.debug('XFORM %s', bar)
+        assert len(bar) == len(Bar._fields)
+        bar = Bar._make(bar)
+        dt = datetime.datetime.utcfromtimestamp(bar.time)
 
         change = False
-        if not math.isnan(quote.bid) and quote.bid != (self.bids[-1] if self.bids else None):
-            self.bids.append(quote.bid)
+        if not math.isnan(bar.bid) and bar.bid != (self.bids[-1] if self.bids else None):
+            self.bids.append(bar.bid)
             change = True
-        if not math.isnan(quote.ask) and quote.ask != (self.asks[-1] if self.asks else None):
-            self.asks.append(quote.ask)
+        if not math.isnan(bar.ask) and bar.ask != (self.asks[-1] if self.asks else None):
+            self.asks.append(bar.ask)
             change = True
-        if not math.isnan(quote.vwap) and quote.vwap:      # Average trade price is closer to bid than ask
-            self.atbid.append(quote.vwap <= (quote.ask - quote.bid) / 2)
+        if not math.isnan(bar.vwap) and bar.vwap:      # Average trade price is closer to bid than ask
+            self.atbid.append(bar.vwap <= (bar.ask - bar.bid) / 2)
             change = True
 
         unrealized_gain_sign = np.sign(unrealized_gain)      # [-1, 1] keeps it simple
