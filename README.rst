@@ -23,15 +23,15 @@ live -- there is no backtesting and no market simulator, though you can (and REA
 
 |buildbadge| |statusbadge|
 
-.. GitLab README doesn't render TOC (where would it link anyway), so we have to put in normal links.
+.. GitLab README doesn't render TOC (where would it link anyway) or sphinx roles, so we have to put in normal links.
 
-* :projlink:`GitLab Repo <>`
-* :doclink:`Documentation <index.html>`
-    * :doclink:`Quickstart <quickstart.html>`
-    * :doclink:`Examples <examples.html>`
-    * :doclink:`Observations and Actions <observations.html>`
-    * :doclink:`Transforms <xforms.html>`
-    * :doclink:`API<api.html>`
+* `GitLab Repo <https://gitlab.com/doctorj/sairen/>`__
+* `Documentation <https://doctorj.gitlab.io/sairen/>`__:
+  `Quickstart <https://doctorj.gitlab.io/sairen/quickstart.html>`__ |
+  `Examples <https://doctorj.gitlab.io/sairen/examples.html>`__ |
+  `Observations and Actions <https://doctorj.gitlab.io/sairen/observations.html>`__ |
+  `Transforms <https://doctorj.gitlab.io/sairen/xforms.html>`__ |
+  `API <https://doctorj.gitlab.io/sairen/api.html>`__
 
 
 .. toctree::
@@ -57,7 +57,7 @@ Hence the name.
 How Bad Is It?
 --------------
 
-Well, trading a single futures contract, you can lose $12.50 a tick plus $4 commissions + fees every
+Well, trading a single futures contract, you can lose $12.50 a tick plus $4 in commissions + fees every
 second without breaking a sweat. So you can easily **lose a thousand dollars a minute**, or $400,000 a day just working
 banker's hours. I haven't even dipped into options. Your losses really are theoretically unlimited.
 
@@ -115,7 +115,7 @@ overtake your life, blacken your soul, and bankrupt you in the process is the be
 `Hacker News <https://news.ycombinator.com/>`__. Yes? Get a second opinion from your mother. I'll
 wait.
 
-Still nothing better to do with your life? :doc:`Don't say I didn't warn you <quickstart>`.
+Still nothing better to do with your life? `Don't say I didn't warn you <https://doctorj.gitlab.io/sairen/quickstart.html>`__.
 
 
 Show Me The Code
@@ -123,7 +123,7 @@ Show Me The Code
 
 .. literalinclude:: ../examples/trading_monkey.py
 
-Check out the examples at :doclink:`examples.html`.
+Check out the `examples <https://doctorj.gitlab.io/sairen/examples.html>`__ in the documentation.
 
 
 Isn't that a supervised learning problem?
