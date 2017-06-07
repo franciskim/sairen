@@ -2,6 +2,7 @@
 """
 Example using the Cross-Entropy Method and deep learning with Keras RL.
 """
+import sys
 import json
 from functools import reduce
 import operator
@@ -85,7 +86,9 @@ def main():
 class DiscreteProcessor(Processor):
     """Convert discrete actions 0, 1, 2 to -1, 0, 1 (short, flat, long)."""
     def process_action(self, action):
-        assert 0 <= action <= 2
+        if not 0 <= action <= 2:        # Sometimes -1s come through, not sure how.
+            print('WARNING: CEM action was {}, forcing to 0'.format(action), file=sys.stderr)
+            action = 1
         return action - 1
 
 

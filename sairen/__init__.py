@@ -21,5 +21,6 @@ OpenAI Gym environment for the financial markets using the Interactive Brokers A
 
 
 from .env import MarketEnv, Bar
+from ibroke import create_logger
 
 

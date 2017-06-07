@@ -151,8 +151,8 @@ plops you into the current stream of market data, wherever that happens to be.
 Second, there is only *one* envrionment per financial instrument, the actual market it trades on.  Running more than one
 agent would just be `self-trading <https://ptg.fia.org/articles/what-self-trade-anyway>`__ in a zero-sum game (and
 losing after commissions).  (It also makes it hard to attribute PNL -- who wins if Agent 1 opens a trade that Agent 2
-closes?) I like to think of it this way: what if you had the market all to yourself and you pit *two* instances of your
-agent against each other?  They can't both win (but your broker sure would).
+closes?) I like to think of it this way: what if the only players in the market were *two* instances of your
+agent?  They can't both win (but your broker sure would).
 
 Third, timing matters.  Observations arrive at regular intervals on the real, external-world wall clock.
 This implies 1) you cannot learn faster than real time and 2) you cannot act slower than real time.  If your agent

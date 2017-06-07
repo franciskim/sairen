@@ -28,6 +28,8 @@ https://interactivebrokers.github.io/tws-api/initial_setup.html#gsc.tab=0
 
 Since the demo does not save its settings, you will have to do this every time you start TWS --
 which, by the way, you will have to do every day, as it automatically restarts a bit before midnight.
+Which seems inconvenient until you learn that 1.) with active trading, TWS grinds to a halt within a day and must
+be restarted anyway, and 2.) IB (the remote service) shuts down every night from 11:45 pm - 12:45 am US/Eastern.
 Did I mention crappy?
 
 If you sign up for a paper (unfunded) account, I believe you can get real-time forex and bond data.  To
@@ -76,12 +78,12 @@ This should print something like this:
     23:21:35     3    0.00    0.00    0.00   0.21    0@0.00     120.44/120.46     5x35    120.44@1       35030
     23:21:36     4    0.00    0.00    0.00   0.09    0@0.00     120.44/120.46     5x34    120.44@1       35030
 
-Trades should be reflected in the TWS GUI.  You can safely stop it with CTRL-C.
+Trades should be reflected in the TWS GUI.  CTRL-C will safely cancel open orders, flatten your position, and disconnect.
 
 Congratulations, you're ready to start printing money!
 
-Instrument tuples
------------------
+Specifying Instruments
+----------------------
 Here are some examples of specifying the ``instrument`` you pass to :class:`MarketEnv`:
 
 * US Stocks: ``'AAPL'``
@@ -108,7 +110,7 @@ opt_type:
     ``PUT`` or ``CALL`` for options
 
 
-The best way to find instrument details is in TWS itself.  Right click an empty spot in Favorites Monitor, type in
+The best way to find instrument (contract) details is in TWS itself.  Right click an empty spot in Favorites Monitor, type in
 the search term, choose the instrument you want.  When you have the instrument in Favorites, right-click and choose
 Contract Info > Description.
 
@@ -118,4 +120,11 @@ it leaves a lot to be desired.
 
 Keeping up with real time
 -------------------------
-Coming soon.
+By default, market data arrives every second, and is stored in a queue.  If it takes more than a second to act
+(call :meth:`step` with an action), the queue will start to back up, and you will be acting on old market data.  It is
+also possible that orders are slow to execute and they get canceled before the next order is placed, and/or Sairen's
+notion of open orders and positions gets out of sync with Interactive Brokers'.  If the queue starts to back up, orders
+pile up, or the position drifts too far past ``max_position``, Sairen will print a warning and stop placing new orders
+until things get back under control.  You (or your agent) can monitor how long your agent is taking with the :obj:`MarketEnv.info`
+dict;  ``agent_time_last`` gives the duration of the most recent action in wallclock seconds, and ``agent_time_avg``
+is a moving average of recent actions.
