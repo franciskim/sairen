@@ -4,7 +4,7 @@ Deep Deterministic Policy Gradient example using Keras-RL.
 """
 
 from keras.models import Sequential, Model
-from keras.layers import Dense, Flatten, Input, merge, BatchNormalization
+from keras.layers import Dense, Flatten, Input, BatchNormalization
 from keras.layers.merge import concatenate
 from rl.agents import DDPGAgent
 from rl.memory import SequentialMemory

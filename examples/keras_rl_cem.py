@@ -15,8 +15,7 @@ from rl.agents.cem import CEMAgent
 from rl.callbacks import FileLogger, Callback
 from rl.memory import EpisodeParameterMemory
 from rl.core import Processor
-from sairen.env import MarketEnv
-from sairen import xform
+from sairen import MarketEnv, xform
 
 EPISODES = 1000
 STEPS_PER_EPISODE = 60

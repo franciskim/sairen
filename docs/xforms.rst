@@ -5,8 +5,9 @@ Observation Transforms
 
 .. note::
 
-   **TL;DR**: Pass a callable to :class:`MarketEnv` as ``obs_xform``, give it an ``observation_space`` field; raw observation arrays in,
-   cooked arrays out, or ``None`` if you don't have enough data yet; be sure to handle ``NaN``.
+   **TL;DR**: Pass a callable to :class:`MarketEnv` as ``obs_xform``.  It should take an observation as a numpy array
+   and return a (possibly different shape) numpy array, or ``None`` if you don't have enough data yet.  Give the
+   callable an ``observation_space`` attribute to tell Gym the shape of your output.  Be sure to handle ``NaN``.
 
 As powerful as deep learning has become, it is unlikely to be able to make sense of the essentially random numbers that
 are raw market data.  Even if it is something as simple as feeding your algorithm the last N bars instead of one, you
@@ -56,13 +57,13 @@ know its observation shape.  You tell it by giving your transform object an ``ob
 which should be a `gym.Space <https://gym.openai.com/docs#spaces>`__ object::
 
     from gym.spaces import Box
-    from sairen import Bar
+    from sairen import Obs
 
     class QueueXform:
         """Stack the last `lookback` observations into a 2D array."""
         def __init__(self, lookback):
             self.q = deque(maxlen=lookback)
-            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Bar._fields)))
+            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Obs._fields)))
 
         def __call__(self, obs):
             self.q.append(obs)
@@ -83,13 +84,13 @@ to create a full observation.
 If your transform doesn't have enough data to build a full observation yet, just return ``None``::
 
     from gym.spaces import Box
-    from sairen import Bar
+    from sairen import Obs
 
     class QueueXform:
         """Stack the last `lookback` observations into a 2D array."""
         def __init__(self, lookback):
             self.q = deque(maxlen=lookback)
-            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Bar._fields)))
+            self.observation_space = Box(low=0, high=1e10, shape=(lookback, len(Obs._fields)))
 
         def __call__(self, obs):
             self.q.append(obs)
@@ -98,6 +99,7 @@ If your transform doesn't have enough data to build a full observation yet, just
             else:
                 return np.array(self.q)
 
+:meth:`step` will *not* be called when the transform returns ``None``.
 ::
 
     >>> xform = QueueXform(2)

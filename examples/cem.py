@@ -22,6 +22,11 @@ import numpy as np
 from sairen import MarketEnv
 from sairen.xform import BinaryDelta
 
+# 1 iteration runs `EPISODES` episodes, each with different parameters.  Each episode is `STEPS_PER_EPISODE` steps.
+ITERATIONS = 10
+EPISODES = 30
+STEPS_PER_EPISODE = 100
+
 
 class ContinuousActionLinearPolicy:
     """Agent that multiplies the observation by its weights and returns the sum."""
@@ -83,7 +88,7 @@ def evaluate(env, agent, steps, iteration=None, episode=None, render=True):
 
 
 def main():
-    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=BinaryDelta(3), episode_steps=100, client_id=2)
+    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=BinaryDelta(3), episode_steps=STEPS_PER_EPISODE, client_id=2)
     obs_size = env.observation_space.shape[0]
 
     def evaluate_params(agent_params, iteration=None, episode=None):
@@ -99,7 +104,7 @@ def main():
     iteration = 0
     init_mean = np.zeros(obs_size + 1)
     init_std  = 1.0
-    for stats in cem(lambda params, episode: evaluate_params(params, iteration, episode), init_mean, params_std=init_std, n_iter=10, batch_size=30, elite_frac=0.2):
+    for stats in cem(lambda params, episode: evaluate_params(params, iteration, episode), init_mean, params_std=init_std, n_iter=ITERATIONS, batch_size=EPISODES, elite_frac=0.2):
         timestamp = datetime.datetime.utcnow().replace(microsecond=0)
         print('\n\nITERATION {:2d} REWARD {:.2f} +/- {:.2f}\n\n'.format(iteration, stats['reward_mean'], stats['reward_std']))
         print(timestamp)

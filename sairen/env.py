@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 from queue import Queue
-from collections import deque
+from collections import deque, namedtuple
 
 import gym
 import numpy as np
@@ -30,16 +30,25 @@ from gym.spaces import Box
 from ibroke import IBroke, Bar, create_logger
 
 
-__version__ = "0.3.1"
-__all__ = ('MarketEnv', 'Bar')
+__version__ = "0.4"
+__all__ = ('MarketEnv', 'Obs')
+RENDER_HEADERS_EVERY_STEPS = 50     #: Print column names to stdout for human-rendered output every this many steps
 # These are used to bound observation Boxes, not sure how important it really is.
 MAX_INSTRUMENT_PRICE = 1e6
 MAX_INSTRUMENT_VOLUME = 1e9
 MAX_INSTRUMENT_QUANTITY = 20000
 MAX_TRADE_SIZE = 1e6
 MAX_TIME = time.time() + 10 * 365 * 24 * 60 * 60
-BAR_BOUNDS = Bar(time=MAX_TIME, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=MAX_TIME, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME)
-RENDER_HEADERS_EVERY_STEPS = 50     #: Print column names to stdout for human-rendered output every this many steps
+Obs = namedtuple('Obs', Bar._fields + ('position', 'unrealized_gain'))
+Obs.__doc__ = Bar.__doc__.replace('Bar', 'Observation') + """
+position
+    A float usually in [-1, 1] giving your current actually held position as a fraction of `max_quantity` (negative for short).
+    The integer number of shares held is ``int(position * max_quantity)``.
+
+unrealized_gain
+    The amount you would make if you liquidated your current position (bought at the ask or sold at the bid).  Negative for loss.
+"""     # That's my favorite dirty hack in a while :)
+OBS_BOUNDS = Obs(time=MAX_TIME, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=MAX_TIME, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME, position=1, unrealized_gain=MAX_INSTRUMENT_PRICE)
 
 
 class MarketEnv(gym.Env):
@@ -65,11 +74,11 @@ class MarketEnv(gym.Env):
 
     # IBroke is event-driven (its methods are called asynchronously by IBPy), whereas Env is essentially an external
     # iterator (the caller calls step() when it's ready for the next observation). To play together, when IBroke's on_bar()
-    # callback receives a new bar (observation), it's stored in a queue.  When Env.step() is called, it takes the next bar
-    # out.  If no bars are available, step() will block waiting for a bar to appear in the queue. If more than one
-    # bar is available, it means that step() is falling behind on processing bars, and a warning will be printed.
+    # callback receives a new bar (observation), it's stored in a queue.  When Env.step() is called, it takes the next observation
+    # out.  If no observations are available, step() will block waiting for an observation to appear in the queue. If more than one
+    # observation is available, it means that step() is falling behind on processing observations, and a warning will be printed.
 
-    def __init__(self, instrument, max_quantity=1, obs_type='time', obs_size=1, obs_xform=None, episode_steps=None, host='localhost', port=7497, client_id=None, loglevel=logging.INFO):
+    def __init__(self, instrument, max_quantity=1, obs_type='time', obs_size=1, obs_xform=None, episode_steps=None, host='localhost', port=7497, client_id=None, timeout_sec=5, loglevel=logging.INFO):
         """
         :param str,tuple instrument: ticker string or :class:`IBroke` ``(symbol, sec_type, exchange, currency, expiry, strike, opt_type)`` tuple.
         :param int max_quantity: The number of shares/contracts that will be bought (or sold) when the action is 1 (or -1).
@@ -77,9 +86,9 @@ class MarketEnv(gym.Env):
           Raw observations are numpy float ndarrays with the following fields::
 
                 time, bid, bidsize, ask, asksize, last, lastsize, lasttime,
-                open, high, low, close, vwap, volume, open_interest
+                open, high, low, close, vwap, volume, open_interest, position, unrealized_gain
 
-          See the :class:`Bar` convenience namedtuple for detailed field descriptions.
+          See the :class:`Obs` convenience namedtuple for detailed field descriptions.
         :param float obs_size: How often you get an observation in seconds.  Ignored for ``obs_type='tick'``.
         :param func obs_xform: Callable that takes a raw input observation array and transforms it,
           returning either another numpy array or ``None`` to indicate data is not ready yet.
@@ -87,6 +96,7 @@ class MarketEnv(gym.Env):
           The final step in an episode will have its action forced to close any open positions so PNL can be properly accounted.
         :param int client_id: A unique integer identifying which API client made an order.  Different instances of Sairen running at the same time must use
           different ``client_id`` values.  In order to discover and modify pre-existing open orders, you must use the same ``client_id`` the orders were created with.
+        :param timeout_sec: request timeout in seconds used by IBroke library.
         :param int loglevel: The `logging level <https://docs.python.org/3/library/logging.html#logging-levels>`_ to use.
         """
         super().__init__()
@@ -100,7 +110,7 @@ class MarketEnv(gym.Env):
         self.profit = 0.0       # Since last step; zeroed every step
         self.episode_profit = 0.0     # Since last reset
         self.reward = None      # Save most recent reward so we can use it in render()
-        self.raw_obs = None     # Raw market data from IBroke
+        self.raw_obs = None     # Raw obs as ndarray
         self.observation = None # Most recent transformed observation
         self.pos_desired = 0    # Action translated into target number of contracts
         self.done = True        # Start in the "please call reset()" state
@@ -108,13 +118,13 @@ class MarketEnv(gym.Env):
         self.unrealized_gain = 0.0
         self._finish_on_next_step = False
         assert obs_xform is None or callable(obs_xform)
-        self._xform = (lambda obs, *args: obs) if obs_xform is None else obs_xform         # Default xform is identity
+        self._xform = (lambda obs: obs) if obs_xform is None else obs_xform         # Default xform is identity
 
-        self.ib = IBroke(host=host, port=port, client_id=client_id, verbose=2)
+        self.ib = IBroke(host=host, port=port, client_id=client_id, timeout_sec=timeout_sec, verbose=2)
         self.instrument = self.ib.get_instrument(instrument)
         self.log.info('Sairen %s trading %s up to %d contracts', __version__, self.instrument.tuple(), self.max_quantity)
         self.ib.register(self.instrument, on_bar=self._on_mktdata, bar_type=obs_type, bar_size=obs_size, on_order=self._on_order, on_alert=self._on_alert)
-        self.observation_space = getattr(obs_xform, 'observation_space', Box(low=np.zeros(len(BAR_BOUNDS)), high=np.array(BAR_BOUNDS)))
+        self.observation_space = getattr(obs_xform, 'observation_space', Box(low=np.zeros(len(OBS_BOUNDS)), high=np.array(OBS_BOUNDS)))
         self.log.debug('XFORM %s', self._xform)
         self.log.debug('OBS SPACE %s', self.observation_space)
         np.set_printoptions(linewidth=9999)
@@ -124,13 +134,13 @@ class MarketEnv(gym.Env):
 
     def _on_mktdata(self, instrument, bar):
         """Called by IBroke on new market data; transforms observation and, if ready, puts it in data_q."""
-        self.log.debug('OBS RAW %s', bar)
-        self.raw_obs = bar
         self.pos_actual = self.ib.get_position(self.instrument)
         self.unrealized_gain = self.pos_actual * self.instrument.leverage * ((bar.bid if self.pos_actual > 0 else bar.ask) - (self.ib.get_cost(self.instrument) or 0))     # If pos > 0, what could we sell for?  Assume buy at the ask, sell at the bid
-        data = np.asarray(bar, dtype=float)
-        obs = self._xform(data, self.unrealized_gain, self.pos_actual, self.max_quantity)
+        self.raw_obs = np.array(bar + (self.pos_actual / self.max_quantity, self.unrealized_gain), dtype=float)
+        self.log.debug('OBS RAW %s', self.raw_obs)
+        obs = self._xform(self.raw_obs)
         self.log.debug('OBS XFORM %s', obs)
+        assert obs is None or isinstance(obs, np.ndarray)
 
         if obs is not None and self.ib.connected and not self.done and self.data_q is not None:     # guard against step() being called before reset().  It also turns out that you can still receive market data while "disconnected"...
             self.data_q.put_nowait(obs)
@@ -148,7 +158,7 @@ class MarketEnv(gym.Env):
     def flatten(self):
         """Cancel any open orders and close any positions."""
         self.ib.flatten(self.instrument)
-        time.sleep(1)       # Give order time to fill
+        time.sleep(1)       # Give order time to fill  TODO: Wait (with timeout) for actual fill
 
     def finish_on_next_step(self):
         """Sets a flag so that the next call to :meth:`step` will flatten any positions and return ``done = True``."""
@@ -177,7 +187,7 @@ class MarketEnv(gym.Env):
             self.ib.disconnect()
 
     def _reset(self):
-        """Flatten positions, reset accounting, and return the first bar."""
+        """Flatten positions, reset accounting, and return the first observation."""
         self.log.debug('RESET')
         self.done = True        # Prevent _on_mktdata() from putting things in the queue and triggering step() while we flatten
         self.flatten()
@@ -192,7 +202,7 @@ class MarketEnv(gym.Env):
         self._finish_on_next_step = False
         self.step_num = 0
         self.data_q = Queue()
-        self.observation = self.data_q.get()       # Blocks until bar ready
+        self.observation = self.data_q.get()       # Blocks until obs ready
         self.act_start_time = time.time()
         return self.observation
 
@@ -273,7 +283,7 @@ class MarketEnv(gym.Env):
 
                 if self.step_num % RENDER_HEADERS_EVERY_STEPS == 1:
                     print(*('{:{}}'.format(name, width) for name, _, width, _ in FIELDS))
-                data = dict(self.raw_obs._asdict(), step=self.step_num, reward=self.reward, unreal=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.datetime.utcfromtimestamp(round(self.raw_obs[0])).time())
+                data = dict(dict(zip(Obs._fields, self.raw_obs)), step=self.step_num, reward=self.reward, unreal=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.datetime.utcfromtimestamp(round(self.raw_obs[0])).time())
                 print(*('{:{}}'.format(fmt.format(**data), width) for _, fmt, width, _ in FIELDS))
                 self.log.debug('INFO %s', sorted(self.info.items()))
         else:

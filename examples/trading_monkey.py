@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """Simple Sairen trading example using a random agent."""
-from sairen.env import MarketEnv
+from sairen import MarketEnv
 
 
 def main():
     """Create a market environment, instantiate a random agent, and run the agent for one episode."""
     env = MarketEnv("AAPL", episode_steps=20)   # Apple stock, 1-second bars by default
     agent = RandomAgent(env.action_space)       # Actions are continuous from -1 = go short to +1 = go long.  0 is go flat.  Sets absolute target position.
-    observation = env.reset()       # A bar observation is a numpy float array, values: time, bid, bidsize, ask, asksize, last, lastsize, lasttime, open, high, low, close, vwap, volume, open_interest
+    observation = env.reset()       # An observation is a numpy float array, values: time, bid, bidsize, ask, asksize, last, lastsize, lasttime, open, high, low, close, vwap, volume, open_interest, position, unrealized_gain
     done = False
     total_reward = 0.0              # Reward is the profit realized when a trade closes
     while not done:

@@ -20,7 +20,7 @@ OpenAI Gym environment for the financial markets using the Interactive Brokers A
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-from .env import MarketEnv, Bar
+from .env import MarketEnv, Obs
 from ibroke import create_logger
 
 

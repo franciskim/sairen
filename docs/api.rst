@@ -10,6 +10,7 @@ API Documentation
 
 .. We can't use automodule because we don't want :members: for namedtuples, since the auto docs are pretty useless.
 
-.. autoclass:: Bar
+.. autoclass:: Obs
+   :exclude-members: __init__, __new__, __class__
 
 
