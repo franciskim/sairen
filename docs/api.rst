@@ -4,7 +4,7 @@ API Documentation
 .. module:: sairen
 
 .. autoclass:: MarketEnv
-   :members:
+   :members:  action_space, flatten, finish_on_next_step, info, _reset, _step, _close
    :show-inheritance:
    :undoc-members:
 

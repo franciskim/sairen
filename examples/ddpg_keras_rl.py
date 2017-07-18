@@ -3,8 +3,9 @@
 Deep Deterministic Policy Gradient example using Keras-RL.
 """
 
+import numpy as np
 from keras.models import Sequential, Model
-from keras.layers import Dense, Flatten, Input, BatchNormalization
+from keras.layers import Dense, Flatten, Input, BatchNormalization, GaussianDropout
 from keras.layers.merge import concatenate
 from rl.agents import DDPGAgent
 from rl.memory import SequentialMemory
@@ -12,26 +13,31 @@ from rl.random import OrnsteinUhlenbeckProcess
 
 from sairen import MarketEnv, xform
 
+
 EPISODES = 16 * 60
 STEPS_PER_EPISODE = 60
+WARMUP_EPISODES = 10
 
 
 def main():
     """Create environment, build models, train."""
-    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=xform.Delta(4), episode_steps=STEPS_PER_EPISODE, client_id=3)
-    assert env.action_space.shape == (1,)
-    assert len(env.observation_space.shape) == 1
-    obs_size = env.observation_space.shape[0]
+    env = MarketEnv(("ES", "FUT", "GLOBEX", "USD"), obs_xform=xform.Basic(30, 4), episode_steps=STEPS_PER_EPISODE, client_id=3)
+    #env = MarketEnv(("EUR", "CASH", "IDEALPRO", "USD"), max_quantity=20000, quantity_increment=20000, obs_xform=xform.Basic(30, 4), episode_steps=STEPS_PER_EPISODE, client_id=5, afterhours=False)
+    obs_size = np.product(env.observation_space.shape)
 
     # Actor model
+    dropout = 0.1
     actor = Sequential([
-        Flatten(input_shape=(1, obs_size)),
+        Flatten(input_shape=(1,) + env.observation_space.shape),
         BatchNormalization(),
         Dense(obs_size, activation='relu'),
+        GaussianDropout(dropout),
         BatchNormalization(),
         Dense(obs_size, activation='relu'),
+        GaussianDropout(dropout),
         BatchNormalization(),
         Dense(obs_size, activation='relu'),
+        GaussianDropout(dropout),
         BatchNormalization(),
         Dense(1, activation='tanh'),
     ])
@@ -39,20 +45,26 @@ def main():
     actor.summary()
 
     action_input = Input(shape=(1,), name='action_input')
-    observation_input = Input(shape=(1, obs_size), name='observation_input')
+    observation_input = Input(shape=(1,) + env.observation_space.shape, name='observation_input')
     flattened_observation = Flatten()(observation_input)
     x = concatenate([action_input, flattened_observation])
+    x = BatchNormalization()(x)
     x = Dense(obs_size + 1, activation='relu')(x)
+    x = GaussianDropout(dropout)(x)
     x = Dense(obs_size + 1, activation='relu')(x)
+    x = GaussianDropout(dropout)(x)
     x = Dense(obs_size + 1, activation='relu')(x)
+    x = GaussianDropout(dropout)(x)
+    x = Dense(obs_size + 1, activation='relu')(x)
+    x = GaussianDropout(dropout)(x)
     x = Dense(1, activation='linear')(x)
     critic = Model(inputs=[action_input, observation_input], outputs=x)
     print('\nCritic Model')
     critic.summary()
 
     memory = SequentialMemory(limit=EPISODES * STEPS_PER_EPISODE, window_length=1)
-    random_process = None   # OrnsteinUhlenbeckProcess(theta=.5, mu=0., sigma=.5)
-    agent = DDPGAgent(nb_actions=1, actor=actor, critic=critic, critic_action_input=action_input, memory=memory, nb_steps_warmup_critic=STEPS_PER_EPISODE * 5, nb_steps_warmup_actor=STEPS_PER_EPISODE * 5, random_process=random_process, gamma=0.99, target_model_update=0.05)
+    random_process = OrnsteinUhlenbeckProcess(theta=.5, mu=0., sigma=.5)
+    agent = DDPGAgent(nb_actions=1, actor=actor, critic=critic, critic_action_input=action_input, memory=memory, nb_steps_warmup_critic=STEPS_PER_EPISODE * WARMUP_EPISODES, nb_steps_warmup_actor=STEPS_PER_EPISODE * WARMUP_EPISODES, random_process=random_process, gamma=0.95, target_model_update=0.01)
     agent.compile('rmsprop', metrics=['mae'])
     weights_filename = 'ddpg_{}_weights.h5f'.format(env.instrument.symbol)
     try:

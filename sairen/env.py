@@ -17,29 +17,33 @@ Sairen environments.
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import datetime
+from datetime import datetime, timedelta
 import logging
 import threading
 import time
 from queue import Queue
 from collections import deque, namedtuple
+from typing import Any, Tuple, Dict
 
 import gym
 import numpy as np
+import sys
+from io import StringIO
+from gym.envs.registration import EnvSpec
 from gym.spaces import Box
-from ibroke import IBroke, Bar, create_logger
+from gym.utils import EzPickle
+from ibroke import IBroke, Bar, create_logger, Instrument, now
 
-
-__version__ = "0.4"
+__version__ = "0.4.1"
 __all__ = ('MarketEnv', 'Obs')
-RENDER_HEADERS_EVERY_STEPS = 50     #: Print column names to stdout for human-rendered output every this many steps
+RENDER_HEADERS_EVERY_STEPS = 60     #: Print column names to stdout for human-rendered output every this many steps
 # These are used to bound observation Boxes, not sure how important it really is.
 MAX_INSTRUMENT_PRICE = 1e6
 MAX_INSTRUMENT_VOLUME = 1e9
 MAX_INSTRUMENT_QUANTITY = 20000
 MAX_TRADE_SIZE = 1e6
 MAX_TIME = time.time() + 10 * 365 * 24 * 60 * 60
-Obs = namedtuple('Obs', Bar._fields + ('position', 'unrealized_gain'))
+Obs = namedtuple('Obs', Bar._fields + ('position', 'unrealized_gain'))      # type: ignore
 Obs.__doc__ = Bar.__doc__.replace('Bar', 'Observation') + """
 position
     A float usually in [-1, 1] giving your current actually held position as a fraction of `max_quantity` (negative for short).
@@ -48,13 +52,13 @@ position
 unrealized_gain
     The amount you would make if you liquidated your current position (bought at the ask or sold at the bid).  Negative for loss.
 """     # That's my favorite dirty hack in a while :)
-OBS_BOUNDS = Obs(time=MAX_TIME, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=MAX_TIME, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME, position=1, unrealized_gain=MAX_INSTRUMENT_PRICE)
+OBS_BOUNDS = Obs(time=MAX_TIME, bid=MAX_INSTRUMENT_PRICE, bidsize=MAX_TRADE_SIZE, ask=MAX_INSTRUMENT_PRICE, asksize=MAX_TRADE_SIZE, last=MAX_INSTRUMENT_PRICE, lastsize=MAX_TRADE_SIZE, lasttime=MAX_TIME, open=MAX_INSTRUMENT_PRICE, high=MAX_INSTRUMENT_PRICE, low=MAX_INSTRUMENT_PRICE, close=MAX_INSTRUMENT_PRICE, vwap=MAX_INSTRUMENT_PRICE, volume=MAX_INSTRUMENT_VOLUME, open_interest=MAX_INSTRUMENT_VOLUME, position=1, unrealized_gain=MAX_INSTRUMENT_PRICE)      # type: ignore
 
 
-class MarketEnv(gym.Env):
+class MarketEnv(gym.Env, EzPickle):
     """Access the Interactive Brokers trading API as an OpenAI Gym environment.
 
-    ``MarketEnv`` provides observations of real-time market data for a single financial instrument.
+    ``MarketEnv`` provides :doc:`observations <observations>` of real-time market data for a single financial instrument.
     The action is a float in the range [-1, 1] to set the (absolute) target position in that instrument.
 
     Calling :meth:`close()` (or terminating Python) will cancel any open orders, flatten positions, and
@@ -67,10 +71,10 @@ class MarketEnv(gym.Env):
     environment's ``max_quantity`` parameter.  -1 means set the position to short ``max_quantity``, 0 means
     exit/close/flatten/no position, and 1 means set the position to long ``max_quantity``. These are "target" positions,
     so an action of 1 means "regardless of current position, buy or sell (or do nothing) as necessary to make my position
-    ``max_quantity``."  Intermediate values are scaled by ``max_quantity`` and rounded to the nearest integer.  Orders
-    are issued at market price so they are filled quickly.
+    ``max_quantity``."  Intermediate values are scaled by ``max_quantity`` and rounded to the nearest multiple of 
+    ``quantity_increment``.  Orders are issued at market price so they are filled quickly.
     """
-    metadata = {'render.modes': ['human']}
+    metadata = {'render.modes': ['human', 'ansi']}
 
     # IBroke is event-driven (its methods are called asynchronously by IBPy), whereas Env is essentially an external
     # iterator (the caller calls step() when it's ready for the next observation). To play together, when IBroke's on_bar()
@@ -78,10 +82,12 @@ class MarketEnv(gym.Env):
     # out.  If no observations are available, step() will block waiting for an observation to appear in the queue. If more than one
     # observation is available, it means that step() is falling behind on processing observations, and a warning will be printed.
 
-    def __init__(self, instrument, max_quantity=1, obs_type='time', obs_size=1, obs_xform=None, episode_steps=None, host='localhost', port=7497, client_id=None, timeout_sec=5, loglevel=logging.INFO):
+    def __init__(self, instrument, max_quantity=1, quantity_increment=1, obs_type='time', obs_size=1, obs_xform=None, episode_steps=None, host='localhost', port=7497, client_id=None, timeout_sec=5, afterhours=True, loglevel=logging.INFO):
         """
         :param str,tuple instrument: ticker string or :class:`IBroke` ``(symbol, sec_type, exchange, currency, expiry, strike, opt_type)`` tuple.
         :param int max_quantity: The number of shares/contracts that will be bought (or sold) when the action is 1 (or -1).
+        :param int quantity_increment: The minimum increment in which shares/contracts will be bought (or sold).  The actual number for a given
+          action is ``round(action * max_quantity / quantity_increment) * quantity_increment``, clipped to the range ``[-max_quantity, max_quantity]``.
         :param str obs_type: ``time`` for bars at regular intervals, or ``tick`` for bars at every quote change.
           Raw observations are numpy float ndarrays with the following fields::
 
@@ -97,14 +103,18 @@ class MarketEnv(gym.Env):
         :param int client_id: A unique integer identifying which API client made an order.  Different instances of Sairen running at the same time must use
           different ``client_id`` values.  In order to discover and modify pre-existing open orders, you must use the same ``client_id`` the orders were created with.
         :param timeout_sec: request timeout in seconds used by IBroke library.
+        :param afterhours: If True, operate during normal market and after hours trading; if False, only operate during normal market hours.
         :param int loglevel: The `logging level <https://docs.python.org/3/library/logging.html#logging-levels>`_ to use.
         """
-        super().__init__()
+        gym.Env.__init__(self)      # EzPickle is supposed to (un)pickle this object by saving the args and creating a new one with them.  Otherwise the IBroke and maybe the queues aren't serializable.
+        EzPickle.__init__(self, instrument=instrument, max_quantity=max_quantity, min_quantity=quantity_increment, obs_type=obs_type, obs_size=obs_size, obs_xform=obs_xform, episode_steps=episode_steps, host=host, port=port, client_id=client_id, timeout_sec=timeout_sec, afterhours=afterhours, loglevel=loglevel)
         self.log = create_logger('sairen', loglevel)
-        assert 1 <= max_quantity <= MAX_INSTRUMENT_QUANTITY, max_quantity
         self.max_quantity = int(max_quantity)
-        assert episode_steps is None or episode_steps > 0
-        self.episode_steps = episode_steps
+        self.quantity_increment = int(quantity_increment)
+        assert 1 <= self.quantity_increment <= self.max_quantity and self.max_quantity <= MAX_INSTRUMENT_QUANTITY, (self.quantity_increment, self.max_quantity)
+        self.episode_steps = None if episode_steps is None else int(episode_steps)
+        assert self.episode_steps is None or self.episode_steps > 0
+        self.afterhours = afterhours
         self.obs_type = obs_type
         self.data_q = None      # Initialized in _reset
         self.profit = 0.0       # Since last step; zeroed every step
@@ -123,17 +133,24 @@ class MarketEnv(gym.Env):
         self.ib = IBroke(host=host, port=port, client_id=client_id, timeout_sec=timeout_sec, verbose=2)
         self.instrument = self.ib.get_instrument(instrument)
         self.log.info('Sairen %s trading %s up to %d contracts', __version__, self.instrument.tuple(), self.max_quantity)
+        market_open = self.market_open()        #self.ib.market_open(self.instrument, afterhours=self.afterhours)
+        self.log.info('Market {} ({} hours).  Next {} {}'.format('open' if market_open else 'closed', 'after' if self.afterhours else 'regular', 'close' if market_open else 'open', self.ib.market_hours(self.instrument, self.afterhours)[int(market_open)]))
         self.ib.register(self.instrument, on_bar=self._on_mktdata, bar_type=obs_type, bar_size=obs_size, on_order=self._on_order, on_alert=self._on_alert)
-        self.observation_space = getattr(obs_xform, 'observation_space', Box(low=np.zeros(len(OBS_BOUNDS)), high=np.array(OBS_BOUNDS)))
+        self.observation_space = getattr(obs_xform, 'observation_space', Box(low=np.zeros(len(OBS_BOUNDS)), high=np.array(OBS_BOUNDS)))     # TODO: Some bounds (pos, gain) are negative
         self.log.debug('XFORM %s', self._xform)
         self.log.debug('OBS SPACE %s', self.observation_space)
         np.set_printoptions(linewidth=9999)
         self.pos_actual = self.ib.get_position(self.instrument)     # Actual last reported number of contracts held
         self.act_start_time = None
         self.act_time = deque(maxlen=10)        # Track recent agent action times
+        self.spec = EnvSpec('MarketEnv-{}-v0'.format('-'.join(map(str, self.instrument.tuple()))), trials=10, max_episode_steps=episode_steps, nondeterministic=True)      # This is a bit of a hack for rllab
 
-    def _on_mktdata(self, instrument, bar):
-        """Called by IBroke on new market data; transforms observation and, if ready, puts it in data_q."""
+    def _on_mktdata(self, instrument: Instrument, bar: Bar) -> None:
+        """Called by IBroke on new market data; transforms observation and, if ready, puts it in data_q.
+
+        After a :meth:`reset`, transforms are being called (updated) in the background even when :meth:`step` is
+        not called.
+        """
         self.pos_actual = self.ib.get_position(self.instrument)
         self.unrealized_gain = self.pos_actual * self.instrument.leverage * ((bar.bid if self.pos_actual > 0 else bar.ask) - (self.ib.get_cost(self.instrument) or 0))     # If pos > 0, what could we sell for?  Assume buy at the ask, sell at the bid
         self.raw_obs = np.array(bar + (self.pos_actual / self.max_quantity, self.unrealized_gain), dtype=float)
@@ -147,25 +164,30 @@ class MarketEnv(gym.Env):
             if self.data_q.qsize() > 1:
                 self.log.warning('Your agent is falling behind! Observation queue contains %d items.', self.data_q.qsize())
 
-    def _on_order(self, order):
+    def _on_order(self, order) -> None:
         """Called when order status changes by IBroke."""
         self.log.debug('ORDER %s\t(thread %d)', order, threading.get_ident())
         self.profit += order.profit
 
-    def _on_alert(self, instrument, msg):
+    def _on_alert(self, instrument, msg) -> None:
         self.log.warning('ALERT: %s', msg)
 
-    def flatten(self):
+    def flatten(self) -> None:
         """Cancel any open orders and close any positions."""
-        self.ib.flatten(self.instrument)
-        time.sleep(1)       # Give order time to fill  TODO: Wait (with timeout) for actual fill
+        if hasattr(self, 'instrument'):     # If self.ib times out connecting, we don't want to flatten() atexit.
+            self.ib.flatten(self.instrument)
+            time.sleep(1)       # Give order time to fill  TODO: Wait (with timeout) for actual fill
 
-    def finish_on_next_step(self):
+    def finish_on_next_step(self) -> None:
         """Sets a flag so that the next call to :meth:`step` will flatten any positions and return ``done = True``."""
         self._finish_on_next_step = True
 
+    def market_open(self) -> bool:
+        """:Return: True if the market will be open in the very near future (respecting the value of `afterhours`)."""
+        return self.ib.market_open(self.instrument, now() + timedelta(seconds=self.ib.timeout_sec), afterhours=self.afterhours)
+
     @property
-    def info(self):
+    def info(self) -> Dict[str, Any]:
         """A dict of information useful for monitoring the environment."""
         return {
             'step': self.step_num,
@@ -178,7 +200,7 @@ class MarketEnv(gym.Env):
             'agent_time_avg': np.mean(self.act_time) if self.act_time else np.nan,
         }
 
-    def _close(self):
+    def _close(self) -> None:
         """Cancel open orders, flatten position, and disconnect."""
         self.log.info('Cancelling, closing, disconnecting.')
         if hasattr(self, 'ib'):     # We may not have ever connected, but _close gets called atexit anyway.
@@ -186,9 +208,13 @@ class MarketEnv(gym.Env):
             self.flatten()
             self.ib.disconnect()
 
-    def _reset(self):
-        """Flatten positions, reset accounting, and return the first observation."""
+    def _reset(self) -> np.ndarray:
+        """Flatten positions, reset accounting, and return the first observation.
+
+        Discards any existing observations in the queue.
+        """
         self.log.debug('RESET')
+        # TODO: Warn if position is not zero at start of episode
         self.done = True        # Prevent _on_mktdata() from putting things in the queue and triggering step() while we flatten
         self.flatten()
         self.profit = 0.0
@@ -196,6 +222,18 @@ class MarketEnv(gym.Env):
         self.reward = 0.0
         self.unrealized_gain = 0.0
         self.observation = None
+        # Note: even when we're "disconnected" or the market is "closed," we can still receive market data (separate connection, afterhours can be open).
+        while not self.ib.connected:
+            time.sleep(self.ib.timeout_sec)
+        msg = None
+        while not self.market_open():
+            if msg is None:
+                open_, _ = self.ib.market_hours(self.instrument, afterhours=self.afterhours)
+                msg = 'Market is closed.'
+                if open_:
+                    msg += ' Next open is {} mins ({})'.format(int(np.ceil((open_ - now()).total_seconds() / 60)), open_)
+                self.log.info(msg)
+            time.sleep(self.ib.timeout_sec)
         self.done = False
         self.action = 0.0
         self.pos_desired = 0
@@ -206,9 +244,13 @@ class MarketEnv(gym.Env):
         self.act_start_time = time.time()
         return self.observation
 
-    def _step(self, action):
-        """Execute any trades necessary to allocate our position to the float `action` in [-1, 1] (short, long),
-        wait for the next cooked observation, and return the observation and reward."""
+    def _step(self, action: float) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
+        """Execute any trades necessary to allocate the position to the float `action` in [-1, 1] (short, long),
+        wait for the next (transformed) observation, and return the observation and reward.
+
+        Will return ``done = True`` if ``self.episode_steps`` has been reached, the connection has been lost, just before the market closes,
+        or :meth:`finish_on_next_step` has been called.  When done, the final observation will be all zeros.
+        """
         self.act_time.append(time.time() - self.act_start_time)
         self.step_num += 1
         self.log.debug('STEP {}: {}\t({:.2f}s)'.format(self.step_num, action, self.act_time[-1]))
@@ -217,7 +259,9 @@ class MarketEnv(gym.Env):
 
         # If last step, set action to flatten, done = True
         done = False
-        if self._finish_on_next_step or (self.episode_steps is not None and self.step_num >= self.episode_steps):
+        if self._finish_on_next_step or (self.episode_steps is not None and self.step_num >= self.episode_steps) or not self.ib.connected or not self.market_open():
+            if not self.market_open():
+                self.log.info('Market closing.')
             action = 0.0
             done = True     # Don't set self.done before waiting on self.data_q, because it will never put anything in.
 
@@ -230,32 +274,36 @@ class MarketEnv(gym.Env):
         self.ib.cancel_all(self.instrument)
         position = self.ib.get_position(self.instrument)
         open_orders = sum(1 for _ in self.ib.get_open_orders())
+        self.pos_desired = int(np.clip(round(action * self.max_quantity / self.quantity_increment) * self.quantity_increment, -self.max_quantity, self.max_quantity))
         # Try to prevent orders and/or positions piling up when things get busy.
-        if abs(position) <= self.max_quantity + 1 and open_orders <= 2:
-            self.pos_desired = int(round(action * self.max_quantity))
+        if open_orders > 1 or (abs(position) > self.max_quantity and abs(self.pos_desired) >= abs(position)):
+            self.log.warning('Constipation: position %d, %d open orders, skipping action.', position, open_orders)
+        else:
             self.log.debug('ORDER TARGET %d', self.pos_desired)
             self.ib.order_target(self.instrument, self.pos_desired)
-        else:
-            self.log.warning('Constipation: position %d, %d open orders, skipping action.', position, open_orders)
 
         if done:
-            # TODO: Actually wait until order settles.
+            # TODO: Actually wait until order settles.  (Close is not happening or accounting is not good.)
             time.sleep(1)       # Wait for final close order to fill
 
         self.reward = self.profit       # Reward is profit since last step
         self.episode_profit += self.profit
         self.profit = 0
-        self.observation = self.data_q.get()       # block until next obs ready
+        if done:
+            self.observation = np.zeros(self.observation_space.shape)
+        else:
+            self.observation = self.data_q.get()       # block until next obs ready
 
         self.done = done        # Don't set until after waiting on queue, or queue will never get filled.
-        info = self.info
+        info = self.info        # Variable because computed property, used more than once, want to be consistent.
         self.log.debug('OBS %s\tINFO %s', self.observation, info)
         self.log.debug('REWARD %.2f\tDONE %s', self.reward, self.done)
         self.act_start_time = time.time()
         return self.observation, self.reward, self.done, info
 
     def _render(self, mode='human', close=False):
-        if mode == 'human':
+        if mode in ('human', 'ansi'):
+            outfile = StringIO() if mode == 'ansi' else sys.stdout
             if not close:
                 if self.instrument.sec_type == 'CASH':
                     FIELDS = (
@@ -265,8 +313,9 @@ class MarketEnv(gym.Env):
                         ('unreal', '{unreal:.2f}', '>7', 'Episode unrealized gain'),
                         ('reward', '{reward:.2f}', '>7', 'Last reward'),
                         ('action', '{action: 6.2f}', '>6', 'Last action (raw float)'),
-                        ('position', '{pos: 4d}@{cost:<7.5f}', '>15', 'Actual shares/contracts currently held'),
-                        ('bid/ask', '{bid:7.5f}/{ask:<7.5f}', '>21', 'Most recent bid and ask prices'))
+                        ('position', '{pos: 6d}@{cost:<7.5f}', '>17', 'Actual shares/contracts currently held'),
+                        ('bid/ask', '{bid:8.5f}/{ask:<8.5f}', '>18', 'Most recent bid and ask prices'),
+                        ('sizes(k)', '{bidsize:5.0f}x{asksize:<5.0f}', '>11', 'Most recent bid and ask sizes (in thousands)'))
                 else:
                     FIELDS = (
                         ('time', '{time}', 8, ''),
@@ -278,14 +327,19 @@ class MarketEnv(gym.Env):
                         ('position', '{pos: 4d}@{cost:<7.2f}', '>12', ''),
                         ('bid/ask', '{bid:7.2f}/{ask:<7.2f}', '>15', ''),
                         ('sizes', '{bidsize:4.0f}x{asksize:<4.0f}', '>9', 'Most recent bid and ask sizes'),
-                        ('last', '{last:7.2f}@{lastsize:<4.0f}', '>12', 'Most recent trade price'),
+                        ('last', '{lastsize: 4.0f}@{last:<7.2f}', '>12', 'Most recent trade price'),
                         ('volume', '{volume:>8.0f}', '>8', 'Total cumulative volume for the day'))
 
                 if self.step_num % RENDER_HEADERS_EVERY_STEPS == 1:
-                    print(*('{:{}}'.format(name, width) for name, _, width, _ in FIELDS))
-                data = dict(dict(zip(Obs._fields, self.raw_obs)), step=self.step_num, reward=self.reward, unreal=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.datetime.utcfromtimestamp(round(self.raw_obs[0])).time())
-                print(*('{:{}}'.format(fmt.format(**data), width) for _, fmt, width, _ in FIELDS))
+                    print(*('{:{}}'.format(name, width) for name, _, width, _ in FIELDS), file=outfile)
+                data = dict(dict(zip(Obs._fields, self.raw_obs)), step=self.step_num, reward=self.reward, unreal=self.unrealized_gain, action=self.action, pnl=self.episode_profit, pos=int(self.pos_actual), cost=self.info['avg_cost'] or 0.0, raw_obs=self.raw_obs, time=datetime.utcfromtimestamp(round(self.raw_obs[0])).time())
+                if self.instrument.sec_type == 'CASH':      # Sizes in thousands, since minimum is 20,000.
+                    data['bidsize'] //= 1000
+                    data['asksize'] //= 1000
+                print(*('{:{}}'.format(fmt.format(**data), width) for _, fmt, width, _ in FIELDS), file=outfile)
                 self.log.debug('INFO %s', sorted(self.info.items()))
+                if mode == 'ansi':
+                    return outfile
         else:
             raise NotImplementedError("Render mode '{}' not implemented".format(mode))
 

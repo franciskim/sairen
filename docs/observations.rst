@@ -13,7 +13,7 @@ to access values by name::
     print(obs.time, obs.open, obs.high, obs.low, obs.close, obs.volume)
 
 
-The documentation below explains the values in the order they occur.
+The documentation below explains observation values in the order they occur.
 
 .. autoclass:: Obs
    :noindex:
